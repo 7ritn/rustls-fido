@@ -1,0 +1,7 @@
+rp_id = "localhost"
+rp_name = "localhost"
+user_name = "user"
+user_display_name = "User"
+db_path = "./fido.db3"
+timeout = 6000
+fido_device_pin = "1234"

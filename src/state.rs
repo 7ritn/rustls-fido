@@ -13,14 +13,14 @@ use aws_lc_rs::digest::digest;
 use base64::Engine;
 use base64::engine::general_purpose;
 use log::{debug, info};
-use webauthn_rs::prelude::{Base64UrlSafeData, DiscoverableAuthentication, PasskeyRegistration, Url, Uuid};
+use webauthn_rs::prelude::{Base64UrlSafeData, Credential, DiscoverableAuthentication, PasskeyRegistration, Url, Uuid};
 use webauthn_rs::{Webauthn, WebauthnBuilder};
 use webauthn_rs_proto::{AuthenticatorAssertionResponseRaw, AuthenticatorAttestationResponseRaw, PublicKeyCredential, RegisterPublicKeyCredential};
 use x509_parser::nom::AsBytes;
 use crate::enums::{FidoAuthenticatorAttachment, FidoMode, FidoPolicy};
 use crate::error::Error;
 use crate::messages::{FidoClientData, FidoCredential, FidoPreRegistrationRequest, FidoPreRegistrationResponse, FidoRegistrationAuthenticatorSelection, FidoRegistrationRequestOptionals, FidoRegistrationResponse, FidoResponse};
-use super::{db::{FidoDB, User}, enums::FidoPublicKeyAlgorithms, messages::{FidoAuthenticationRequest, FidoAuthenticationRequestOptionals, FidoAuthenticationResponse, FidoRegistrationRequest}};
+use super::{db::{FidoDB, RegEntry}, enums::FidoPublicKeyAlgorithms, messages::{FidoAuthenticationRequest, FidoAuthenticationRequestOptionals, FidoAuthenticationResponse, FidoRegistrationRequest}};
 
 type EphemUserId = Vec<u8>;
 type UserId = Vec<u8>;
@@ -28,7 +28,7 @@ type UserId = Vec<u8>;
 /// State and configuration for Fido TLS Extension server-side
 #[derive(Debug, Clone)]
 pub struct FidoServer {
-    pub(crate) webauthn: Webauthn,
+    pub webauthn: Webauthn,
     pub(crate) db: FidoDB,
     pub(crate) user_verification: FidoPolicy,
     pub(crate) resident_key: FidoPolicy,
@@ -145,11 +145,10 @@ impl FidoServer {
             type_: String::new(),
             extensions: Default::default()
         };
-
         let passkey = self.webauthn.finish_passkey_registration(&reg, &skr).map_err(|e| Error::General(e.to_string()))?;
-
-        self.db.add_user(User{user_id, passkey})?;
-
+        let cred: Credential = passkey.clone().into();
+        let reg_entry = RegEntry {cred_id: passkey.cred_id().to_vec(), user_id, passkey, counter: cred.counter};
+        self.db.add_passkey(reg_entry)?;
         Ok(())
     }
 
@@ -185,14 +184,20 @@ impl FidoServer {
             type_: String::new(),
             extensions: Default::default()
         };
+
         let (uuid, _) = self.webauthn.identify_discoverable_authentication(&reg).map_err(|e| Error::General(e.to_string()))?;
 
         let user_id = uuid.clone().as_bytes().to_vec();
         let passkey = self.db.get_passkey(&user_id)?;
-
         let _authentication_result = self.webauthn.finish_discoverable_authentication(&reg, sas, &[passkey.into()]).map_err(|e| Error::General(e.to_string()))?;
-
-        // ToDo: verify counter
+        
+        let cred_counter = self.db.get_sign_count(&user_id)?;
+        let auth_counter = _authentication_result.counter() as u32;
+        if cred_counter != 0 || auth_counter != 0 {
+            if cred_counter >= auth_counter {
+                return Err(Error::General("counter mismatch".to_string()))
+            }
+        }
 
         Ok(())
     }

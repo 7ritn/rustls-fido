@@ -9,14 +9,33 @@ aws-lc-rs = { version = "1.12", default-features = false , features = ["aws-lc-s
 base64 = "0.22"
 log = { version = "0.4.8" }
 pki-types = { package = "rustls-pki-types", version = "1.11", features = ["alloc"] }
-rusqlite = "0.35.0"
+rusqlite = "0.36"
 serde = { version = "1", features = ["derive"] }
 serde_bytes = "0.11.17"
 serde_cbor = "0.11.2"
 serde_json = "1"
 serde_repr = "0.1.20"
 serde_tuple = "1.1.0"
-webauthn-rs = { version = "0.5.1", features = ["conditional-ui"] }
+webauthn-rs = { version = "0.5.1", features = ["conditional-ui", "danger-credential-internals"] }
 webauthn-rs-proto = "0.5.1"
 x509-parser = "0.17"
 thiserror = "2.0.12"
+env_logger = { version = "0.11.8", optional = true}
+config = {version = "0.15", optional = true}
+anyhow = {version = "1", optional = true}
+
+[features]
+build-binary = ["env_logger", "config", "anyhow"]
+
+[lib]
+name = "rustls_fido"
+
+[[bin]]
+name = "register"
+path = "src/bin/register.rs"
+required-features = ["build-binary"]
+
+[[bin]]
+name = "authenticate"
+path = "src/bin/authenticate.rs"
+required-features = ["build-binary"]
