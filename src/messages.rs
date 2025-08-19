@@ -1,5 +1,5 @@
 use core::fmt;
-use std::{format, println, string::String, vec::Vec};
+use std::{format, string::String, vec::Vec};
 
 use serde::{de, Deserialize, Deserializer, Serialize, Serializer};
 use serde::de::{MapAccess, SeqAccess, Visitor};
@@ -10,27 +10,18 @@ use crate::enums::{FidoAuthenticatorAttachment, FidoAuthenticatorTransport, Fido
 
 /// FidoPreRegistrationIndication
 #[derive(Debug, Clone, Serialize_tuple, Deserialize_tuple)]
-pub struct FidoPreRegistrationIndication {
+pub struct FidoPreIndication {
     /// message_type
     pub message_type: u8,
 }
 
 #[derive(Debug, Clone, Serialize_tuple, Deserialize_tuple)]
-pub struct FidoPreRegistrationRequest {
+pub struct FidoPreRequest {
     pub message_type: u8,
     #[serde(with = "serde_bytes")]
     pub ephem_user_id: Vec<u8>,
     #[serde(with = "serde_bytes")]
     pub gcm_key: Vec<u8>
-}
-
-#[derive(Debug, Clone, Serialize_tuple, Deserialize_tuple)]
-pub struct FidoPreRegistrationResponse {
-    pub message_type: u8,
-    pub user_name: String,
-    pub user_display_name: String,
-    #[serde(with = "serde_bytes")]
-    pub ticket: Vec<u8>
 }
 
 /// FidoRegistrationIndication
@@ -41,6 +32,12 @@ pub struct FidoRegistrationIndication {
     /// ephem_user_id
     #[serde(with = "serde_bytes")]
     pub ephem_user_id: Vec<u8>,
+    #[serde(with = "serde_bytes")]
+    pub enc_user_name: Vec<u8>,
+    #[serde(with = "serde_bytes")]
+    pub enc_user_display_name: Vec<u8>,
+    #[serde(with = "serde_bytes")]
+    pub enc_ticket: Vec<u8>
 }
 
 #[derive(Debug, Clone, Serialize_tuple, Deserialize_tuple)]
@@ -78,12 +75,10 @@ impl Serialize for FidoRegistrationRequestOptionals {
             map.serialize_entry(&1, timeout)?;
         }
         if let Some(ref val) = self.authenticator_selection {
-            map.serialize_entry(&2, &val.attachment)?;
-            map.serialize_entry(&3, &val.resident_key)?;
-            map.serialize_entry(&4, &val.user_verification)?;
+            map.serialize_entry(&2, &val)?;
         }
         if let Some(ref val) = self.excluded_credentials {
-            map.serialize_entry(&5, &val)?;
+            map.serialize_entry(&3, &val)?;
         }
         map.end()
     }
@@ -114,10 +109,8 @@ impl<'de> Deserialize<'de> for FidoRegistrationRequestOptionals {
                 while let Some(key) = map.next_key::<u8>()? {
                     match key {
                         1 => timeout = map.next_value()?,
-                        2 => authenticator_selection.attachment = map.next_value()?,
-                        3 => authenticator_selection.resident_key = map.next_value()?,
-                        4 => authenticator_selection.user_verification = map.next_value()?,
-                        5 => excluded_credentials = map.next_value()?,
+                        2 => authenticator_selection = map.next_value()?,
+                        3 => excluded_credentials = map.next_value()?,
                         _ => {
                             let _: de::IgnoredAny = map.next_value()?; // skip unknown keys
                         }
@@ -243,8 +236,6 @@ impl<'de> Deserialize<'de> for FidoAuthenticationRequestOptionals {
                     extensions,
                 };
 
-                println!("{:?}", a);
-
                 Ok(a)
             }
         }
@@ -276,10 +267,67 @@ pub struct FidoAuthenticationResponse {
     pub authenticator_data: Vec<u8>,
     #[serde(with = "serde_bytes")]
     pub signature: Vec<u8>,
-    #[serde(with = "serde_bytes")]
-    pub user_handle: Vec<u8>,
-    #[serde(with = "serde_bytes")]
-    pub selected_credential_id: Vec<u8>
+    pub optionals: FidoAuthenticationResponseOptionals,
+}
+
+#[derive(Debug, Clone, Default)]
+pub struct FidoAuthenticationResponseOptionals {
+    pub user_handle: Option<Vec<u8>>,
+    pub selected_credential_id: Option<Vec<u8>>
+}
+
+impl Serialize for FidoAuthenticationResponseOptionals {
+    fn serialize<S>(&self, serializer: S) -> Result<S::Ok, S::Error>
+    where
+        S: Serializer,
+    {
+        let mut map = serializer.serialize_map(None)?;
+        if let Some(user_handle) = &self.user_handle { map.serialize_entry(&1, user_handle)? }
+        if let Some(selected_credential_id) = &self.selected_credential_id { map.serialize_entry(&2, selected_credential_id)? }
+        map.end()
+    }
+}
+
+impl<'de> Deserialize<'de> for FidoAuthenticationResponseOptionals {
+    fn deserialize<D>(deserializer: D) -> Result<Self, D::Error>
+    where
+        D: Deserializer<'de>,
+    {
+        struct FieldVisitor;
+
+        impl<'de> Visitor<'de> for FieldVisitor {
+            type Value = FidoAuthenticationResponseOptionals;
+
+            fn expecting(&self, formatter: &mut fmt::Formatter<'_>) -> fmt::Result {
+                formatter.write_str("a map with integer keys 1..=5")
+            }
+
+            fn visit_map<A>(self, mut map: A) -> Result<Self::Value, A::Error>
+            where
+                A: MapAccess<'de>,
+            {
+                let mut user_handle = None;
+                let mut selected_credential_id = None;
+
+                while let Some(key) = map.next_key::<u8>()? {
+                    match key {
+                        1 => user_handle = map.next_value()?,
+                        2 => selected_credential_id = map.next_value()?,
+                        _ => { let _ : de::IgnoredAny = map.next_value()?; }
+                    }
+                }
+
+                let a = FidoAuthenticationResponseOptionals {
+                    user_handle,
+                    selected_credential_id,
+                };
+
+                Ok(a)
+            }
+        }
+
+        deserializer.deserialize_map(FieldVisitor)
+    }
 }
 
 // Group Enums
@@ -287,7 +335,7 @@ pub struct FidoAuthenticationResponse {
 #[derive(Debug, Clone, Serialize)]
 #[serde(untagged)]
 pub enum FidoIndication {
-    PreRegistration(FidoPreRegistrationIndication),
+    PreRegistration(FidoPreIndication),
     Registration(FidoRegistrationIndication),
     Authentication(FidoAuthenticationIndication)
 }
@@ -314,22 +362,34 @@ impl<'de> Deserialize<'de> for FidoIndication {
                     .ok_or_else(|| de::Error::invalid_length(0, &self))?;
 
                 match message_type {
-                    1 => Ok(FidoIndication::PreRegistration(FidoPreRegistrationIndication {
+                    1 => Ok(FidoIndication::PreRegistration(FidoPreIndication {
                         message_type
                     })),
-                    4 => {
+                    3 => {
                         // For Registration, we need the ephem_user_id
                         let ephem_user_id_bytes: &[u8] = seq.next_element()?
                             .ok_or_else(|| de::Error::invalid_length(1, &self))?;
-
                         let ephem_user_id = Vec::from(ephem_user_id_bytes);
+
+                        let enc_user_name_bytes: &[u8] = seq.next_element()?
+                            .ok_or_else(|| de::Error::invalid_length(2, &self))?;
+
+                        let enc_user_display_name_bytes: &[u8] = seq.next_element()?
+                            .ok_or_else(|| de::Error::invalid_length(3, &self))?;
+
+                        let enc_ticket_bytes: &[u8] = seq.next_element()?
+                            .ok_or_else(|| de::Error::invalid_length(4, &self))?;
+
 
                         Ok(FidoIndication::Registration(FidoRegistrationIndication {
                             message_type,
-                            ephem_user_id
+                            ephem_user_id,
+                            enc_user_name: enc_user_name_bytes.to_vec(),
+                            enc_user_display_name: enc_user_display_name_bytes.to_vec(),
+                            enc_ticket: enc_ticket_bytes.to_vec(),
                         }))
                     },
-                    7 => Ok(FidoIndication::Authentication(FidoAuthenticationIndication {
+                    6 => Ok(FidoIndication::Authentication(FidoAuthenticationIndication {
                         message_type
                     })),
                     _ => Err(de::Error::custom(format!(
@@ -347,7 +407,7 @@ impl<'de> Deserialize<'de> for FidoIndication {
 #[derive(Debug, Clone, Serialize, Deserialize)]
 #[serde(untagged)]
 pub enum FidoRequest {
-    PreRegistration(FidoPreRegistrationRequest),
+    PreRegistration(FidoPreRequest),
     Registration(FidoRegistrationRequest),
     Authentication(FidoAuthenticationRequest)
 }
@@ -355,14 +415,13 @@ pub enum FidoRequest {
 #[derive(Debug, Clone, Serialize, Deserialize)]
 #[serde(untagged)]
 pub enum FidoResponse {
-    PreRegistration(FidoPreRegistrationResponse),
     Registration(FidoRegistrationResponse),
     Authentication(FidoAuthenticationResponse)
 }
 
 // Implement Constructors
 
-impl FidoPreRegistrationIndication {
+impl FidoPreIndication {
     pub fn new() -> Self {
         Self { 
             message_type: MessageType::PreRegistrationIndication as u8,
@@ -370,7 +429,7 @@ impl FidoPreRegistrationIndication {
     }
 }
 
-impl FidoPreRegistrationRequest {
+impl FidoPreRequest {
     pub fn new(ephem_user_id: Vec<u8>, gcm_key: Vec<u8>) -> Self {
         Self { 
             message_type: MessageType::PreRegistrationRequest as u8,
@@ -380,22 +439,14 @@ impl FidoPreRegistrationRequest {
     }
 }
 
-impl FidoPreRegistrationResponse {
-    pub fn new(user_name: String, user_display_name: String, ticket: Vec<u8>) -> Self {
-        Self { 
-            message_type: MessageType::PreRegistrationResponse as u8,
-            user_name,
-            user_display_name,
-            ticket
-        }
-    }
-}
-
 impl FidoRegistrationIndication {
-    pub fn new(ephem_user_id: &Vec<u8>) -> Self {
+    pub fn new(ephem_user_id: &[u8], enc_user_name: &[u8], enc_user_display_name: &[u8], enc_ticket: &[u8]) -> Self {
         Self { 
             message_type: MessageType::RegistrationIndication as u8,
-            ephem_user_id: ephem_user_id.clone()
+            ephem_user_id: ephem_user_id.to_vec(),
+            enc_user_name: enc_user_name.to_vec(),
+            enc_user_display_name: enc_user_display_name.to_vec(),
+            enc_ticket: enc_ticket.to_vec(),
         }
     }
 }
@@ -463,14 +514,18 @@ impl FidoAuthenticationRequest {
 }
 
 impl FidoAuthenticationResponse {
-    pub fn new(client_data_json: String, authenticator_data: Vec<u8>, signature: Vec<u8>, user_handle: Vec<u8>, selected_credential_id: Vec<u8>) -> Self {
-        Self { 
+    pub fn new(client_data_json: String, authenticator_data: Vec<u8>, signature: Vec<u8>, user_handle: Option<Vec<u8>>, selected_credential_id: Option<Vec<u8>>) -> Self {
+        let optionals = FidoAuthenticationResponseOptionals {
+            user_handle,
+            selected_credential_id,
+        };
+
+        Self {
             message_type: MessageType::AuthenticationResponse as u8,
             client_data_json,
             authenticator_data,
             signature,
-            user_handle,
-            selected_credential_id
+            optionals
         }
     }
 }

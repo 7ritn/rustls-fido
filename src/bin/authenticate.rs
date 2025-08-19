@@ -1,4 +1,3 @@
-use std::io::Stderr;
 use std::sync::mpsc::channel;
 use std::time::Duration;
 use authenticator::authenticatorservice::{AuthenticatorService, SignArgs};
@@ -93,8 +92,8 @@ impl AuthenticationState {
             client_data_json,
             sign_result.assertion.auth_data.to_vec(),
             sign_result.assertion.signature,
-            user_handle.expect("user_handle"),
-            selected_credential_id.expect("selected_credential_id")
+            user_handle,
+            selected_credential_id
         ))
     }
 
@@ -112,18 +111,18 @@ impl AuthenticationState {
 
     //noinspection ALL
     pub fn finish_register_fido_server(&mut self, sas: DiscoverableAuthentication, aut: FidoAuthenticationResponse) -> Result<(), Error> {
-        let credential_id_string = String::from_utf8(aut.selected_credential_id.clone()).unwrap_or_default();
+        let credential_id_string = String::from_utf8(aut.optionals.selected_credential_id.clone().unwrap()).unwrap_or_default();
 
         let authentication_response = AuthenticatorAssertionResponseRaw{
             authenticator_data: aut.authenticator_data.into(),
             client_data_json: aut.client_data_json.as_bytes().to_vec().into(),
             signature: aut.signature.into(),
-            user_handle: Some(aut.user_handle.into())
+            user_handle: Some(aut.optionals.user_handle.unwrap().into())
         };
 
         let reg = PublicKeyCredential {
             id: credential_id_string,
-            raw_id: aut.selected_credential_id.into(),
+            raw_id: aut.optionals.selected_credential_id.unwrap().into(),
             response: authentication_response,
             type_: String::new(),
             extensions: Default::default()

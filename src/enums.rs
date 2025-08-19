@@ -9,13 +9,12 @@ use webauthn_rs::prelude::DiscoverableAuthentication;
 pub enum MessageType {
     PreRegistrationIndication = 0x01,
     PreRegistrationRequest = 0x02,
-    PreRegistrationResponse = 0x03,
-    RegistrationIndication = 0x04,
-    RegistrationRequest = 0x05,
-    RegistrationResponse = 0x06,
-    AuthenticationIndication = 0x07,
-    AuthenticationRequest = 0x08,
-    AuthenticationResponse = 0x09
+    RegistrationIndication = 0x03,
+    RegistrationRequest = 0x04,
+    RegistrationResponse = 0x05,
+    AuthenticationIndication = 0x06,
+    AuthenticationRequest = 0x07,
+    AuthenticationResponse = 0x08
 }
 
 #[derive(Debug, Serialize, Deserialize, Clone, Copy, PartialEq, Eq)]

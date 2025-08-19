@@ -11,8 +11,8 @@ use authenticator::statecallback::StateCallback;
 use base64::Engine;
 use crate::enums::{FidoMode, FidoPolicy};
 use crate::error::Error;
-use crate::helper::decrypt_in_place;
-use crate::messages::{FidoAuthenticationRequest, FidoAuthenticationResponse, FidoClientData, FidoPreRegistrationResponse, FidoRegistrationRequest, FidoRegistrationResponse, FidoResponse};
+use crate::helper::{decrypt_in_place, encrypt_in_place};
+use crate::messages::{FidoAuthenticationRequest, FidoAuthenticationResponse, FidoClientData, FidoIndication, FidoPreIndication, FidoRegistrationIndication, FidoRegistrationRequest, FidoRegistrationResponse, FidoResponse};
 
 /// FidoClient
 #[derive(Debug, Clone)]
@@ -66,13 +66,7 @@ impl FidoClient {
         let reg_option = self.persistent_reg_state.as_ref().unwrap();
         let mut reg_state = reg_option.lock().expect("lock persistent_reg_state");
         *reg_state = Some(RegistrationState{ephem_user_id, gcm_key});
-
-        let mut response = self.response_buffer.lock().expect("lock response_buffer");
-        *response = Some(FidoResponse::PreRegistration(FidoPreRegistrationResponse::new(
-            self.user_name.clone().unwrap(),
-            self.user_display_name.clone().unwrap(),
-            self.ticket.as_ref().expect("no ticket").clone(),
-        )));
+        debug!("Pre-register FIDO token: {:?}", reg_state);
     }
 
     pub fn register_fido(&self, request: FidoRegistrationRequest) -> Result<(), Error> {
@@ -81,11 +75,14 @@ impl FidoClient {
 
         debug!("Prepare register FIDO token");
 
-        let gcm_key = self.persistent_reg_state
+        let mut reg_state = self.persistent_reg_state
             .as_ref()
             .unwrap()
             .lock()
-            .expect("lock persistent_reg_state")
+            .expect("lock persistent_reg_state");
+
+        debug!("Pre-register FIDO token: {:?}", reg_state);
+        let gcm_key = reg_state
             .take()
             .ok_or(Error::General("no pre_reg_state available".to_string()))?
             .gcm_key;
@@ -227,8 +224,8 @@ impl FidoClient {
             client_data_json,
             sign_result.assertion.auth_data.to_vec(),
             sign_result.assertion.signature,
-            user_handle.expect("user_handle"),
-            selected_credential_id.expect("selected_credential_id")
+            Option::from(user_handle.expect("user_handle")),
+            Option::from(selected_credential_id.expect("selected_credential_id"))
         )));
 
         Ok(())
@@ -242,10 +239,29 @@ impl FidoClient {
         self.mode
     }
 
-    pub fn current_reg_state(&self) -> Option<RegistrationState> {
-        let Some(reg_lock) = self.persistent_reg_state.as_ref() else { return None };
+    pub fn get_registration_indication(&self) -> Result<FidoIndication, Error> {
+        let reg_lock = self.persistent_reg_state.as_ref().expect("Client not in registration mode");
         let binding = reg_lock.lock().expect("lock persistent_reg_state");
-        binding.clone()
+        match binding.as_ref() {
+            Some(pre_reg_state) => {
+                let key = &pre_reg_state.gcm_key;
+                let mut enc_user_name = self.user_name.as_ref().expect("User name missing").as_bytes().to_vec();
+                let mut enc_user_display_name = self.user_display_name.as_ref().expect("User display name missing").as_bytes().to_vec();
+                let mut ticket = self.ticket.clone().expect("Ticket missing");
+
+                encrypt_in_place(key, &mut enc_user_name)?;
+                encrypt_in_place(key, &mut enc_user_display_name)?;
+                encrypt_in_place(key, &mut ticket)?;
+
+                Ok(FidoIndication::Registration(FidoRegistrationIndication::new(
+                    &pre_reg_state.ephem_user_id,
+                    &enc_user_name,
+                    &enc_user_display_name,
+                    &ticket
+                )))
+            }
+            None => Ok(FidoIndication::PreRegistration(FidoPreIndication::new()))
+        }
     }
 
     pub fn take_response_buffer(&self) -> Option<FidoResponse> {

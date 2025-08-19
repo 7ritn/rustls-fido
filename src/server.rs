@@ -1,4 +1,4 @@
-use std::{borrow::ToOwned, collections::HashMap, format, string::String, vec, vec::Vec};
+use std::{collections::HashMap, format, string::String, vec, vec::Vec};
 use std::prelude::rust_2024::ToString;
 use core::time::Duration;
 use webauthn_rs::prelude::{Base64UrlSafeData, Credential, DiscoverableAuthentication, PasskeyRegistration, Url, Uuid};
@@ -7,12 +7,11 @@ use webauthn_rs_proto::{AuthenticatorAssertionResponseRaw, AuthenticatorAttestat
 use x509_parser::nom::AsBytes;
 use crate::enums::{FidoAuthenticatorAttachment, FidoPolicy};
 use crate::error::Error;
-use crate::helper::encrypt_in_place;
-use crate::messages::{FidoCredential, FidoPreRegistrationRequest, FidoRegistrationAuthenticatorSelection, FidoRegistrationRequestOptionals};
+use crate::helper::{decrypt_in_place, encrypt_in_place};
+use crate::messages::{FidoCredential, FidoPreRequest, FidoRegistrationAuthenticatorSelection, FidoRegistrationRequestOptionals};
 use super::{db::{FidoDB, RegEntry}, enums::FidoPublicKeyAlgorithms, messages::{FidoAuthenticationRequest, FidoAuthenticationRequestOptionals, FidoAuthenticationResponse, FidoRegistrationRequest}};
 
 type EphemUserId = Vec<u8>;
-type UserId = Vec<u8>;
 
 /// State and configuration for Fido TLS Extension server-side
 #[derive(Debug, Clone)]
@@ -25,7 +24,7 @@ pub struct FidoServer {
     pub(crate) timeout: u32,
     pub(crate) ticket: Vec<u8>,
     pub(crate) mandatory: bool,
-    pub(crate) registration_state: HashMap<EphemUserId, ((FidoRegistrationRequest, UserId), PasskeyRegistration)>,
+    pub(crate) registration_state: HashMap<EphemUserId, PasskeyRegistration>,
     pub(crate) pre_registration_state: HashMap<Vec<u8>, Vec<u8>>
 }
 
@@ -65,13 +64,28 @@ impl FidoServer {
             pre_registration_state: Default::default()
         }
     }
-    pub fn start_register_fido(&mut self, ephem_user_id: Vec<u8>, ticket: Vec<u8>, user_name: String, user_display_name: String) -> Result<(), Error>{
-        if self.ticket != ticket {
-            return Err(Error::General("fido registration ticket invalid".to_string()))
-        }
+    pub fn start_register_fido(&mut self, ephem_user_id: Vec<u8>, mut enc_ticket: Vec<u8>, mut enc_user_name: Vec<u8>, mut enc_user_display_name: Vec<u8>) -> Result<(FidoRegistrationRequest, Vec<u8>), Error>{
         let gcm_key = self.pre_registration_state
             .get(&ephem_user_id)
             .ok_or(Error::General("client did not pre-register".to_string()))?;
+
+        let ticket = decrypt_in_place(gcm_key, &mut enc_ticket)?;
+
+        if self.ticket != ticket {
+            return Err(Error::General("fido registration ticket invalid".to_string()))
+        }
+
+        let mut user_name_bytes = enc_user_name.clone();
+        let mut user_display_name_bytes = enc_user_display_name.clone();
+
+        decrypt_in_place(gcm_key, &mut user_name_bytes)?;
+        decrypt_in_place(gcm_key, &mut user_display_name_bytes)?;
+        
+        let user_name = String::from_utf8(user_name_bytes.to_vec())
+            .map_err(|_| Error::General("user name decryption failed".to_string()))?;
+        let user_display_name = String::from_utf8(user_display_name_bytes.to_vec())
+            .map_err(|_| Error::General("user display name decryption failed".to_string()))?;
+
         let user_id = Uuid::new_v4();
 
         let (ccr, skr) = self.webauthn
@@ -82,9 +96,7 @@ impl FidoServer {
                 None
             )
             .map_err(|e| Error::General(e.to_string()))?;
-            
-        let mut enc_user_name = user_name.clone().as_bytes().to_vec();
-        let mut enc_user_display_name = user_display_name.clone().as_bytes().to_vec();
+
         let mut enc_user_id = user_id.clone().as_bytes().to_vec();
 
         let authenticator_selection = FidoRegistrationAuthenticatorSelection{
@@ -94,8 +106,6 @@ impl FidoServer {
         };
         let excluded_credentials: Vec<FidoCredential> = vec![];
 
-        encrypt_in_place(gcm_key, &mut enc_user_name)?;
-        encrypt_in_place(gcm_key, &mut enc_user_display_name)?;
         encrypt_in_place(gcm_key, &mut enc_user_id)?;
 
         let optionals = FidoRegistrationRequestOptionals{
@@ -115,13 +125,13 @@ impl FidoServer {
             Some(optionals)
         );
 
-        self.registration_state.insert(ephem_user_id.clone(), ((registration_request, user_id.as_bytes().into()), skr));
+        self.registration_state.insert(ephem_user_id.clone(), skr);
 
-        Ok(())
+        Ok((registration_request, user_id.as_bytes().into()))
     }
 
     pub fn finish_register_fido(&mut self, ephem_user_id: Vec<u8>, user_id: Vec<u8>, client_data_json: String, attestation_object: Vec<u8>) -> Result<(), Error> {
-        let (_, skr) = self.registration_state.remove(&ephem_user_id).ok_or(Error::General("no registration state found".to_string()))?;
+        let skr = self.registration_state.remove(&ephem_user_id).ok_or(Error::General("no registration state found".to_string()))?;
 
         let attestation_response = AuthenticatorAttestationResponseRaw{
             attestation_object: attestation_object.as_bytes().into(),
@@ -159,18 +169,18 @@ impl FidoServer {
     }
 
     pub fn finish_authentication_fido(&self, fido_response: FidoAuthenticationResponse, sas: DiscoverableAuthentication) -> Result<(), Error>{
-        let credential_id_string = String::from_utf8(fido_response.selected_credential_id.clone()).unwrap_or_default();
+        let credential_id_string = String::from_utf8(fido_response.optionals.selected_credential_id.clone().unwrap()).unwrap_or_default();
 
         let authentication_response = AuthenticatorAssertionResponseRaw{
             authenticator_data: fido_response.authenticator_data.into(),
             client_data_json: fido_response.client_data_json.as_bytes().to_vec().into(),
             signature: fido_response.signature.into(),
-            user_handle: Some(fido_response.user_handle.into())
+            user_handle: Some(fido_response.optionals.user_handle.unwrap().into())
         };
 
         let reg = PublicKeyCredential { 
             id: credential_id_string,
-            raw_id: fido_response.selected_credential_id.into(),
+            raw_id: fido_response.optionals.selected_credential_id.unwrap().into(),
             response: authentication_response, 
             type_: String::new(),
             extensions: Default::default()
@@ -193,17 +203,9 @@ impl FidoServer {
         Ok(())
     }
 
-    pub fn add_ephem_user(&mut self, ephem_user_id: Vec<u8>, gcm_key: Vec<u8>) ->  FidoPreRegistrationRequest {
+    pub fn add_ephem_user(&mut self, ephem_user_id: Vec<u8>, gcm_key: Vec<u8>) -> FidoPreRequest {
         self.pre_registration_state.insert(ephem_user_id.clone(), gcm_key.clone());
-        FidoPreRegistrationRequest::new(ephem_user_id, gcm_key)
-    }
-
-    pub fn get_registration_request(&mut self, ephem_user_id: &Vec<u8>) ->  Result<&(FidoRegistrationRequest, Vec<u8>), Error> {
-        if let Some(state) = self.registration_state.get(ephem_user_id){
-            Ok(&state.0)
-        } else {
-            Err(Error::General("No pre reg request has been made".to_owned()))
-        }
+        FidoPreRequest::new(ephem_user_id, gcm_key)
     }
 
     pub fn is_mandatory(&self) -> bool {
