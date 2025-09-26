@@ -21,11 +21,10 @@ webauthn-rs-proto = "0.5.1"
 x509-parser = "0.17"
 thiserror = "2.0.12"
 env_logger = { version = "0.11.8", optional = true}
-config = {version = "0.15", optional = true}
 anyhow = {version = "1", optional = true}
 
 [features]
-build-binary = ["env_logger", "config", "anyhow"]
+build-binary = ["env_logger", "anyhow"]
 
 [lib]
 name = "rustls_fido"

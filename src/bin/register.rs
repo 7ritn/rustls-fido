@@ -1,4 +1,3 @@
-use std::io;
 use std::sync::mpsc::channel;
 use std::time::Duration;
 use authenticator::authenticatorservice::{AuthenticatorService, RegisterArgs};
@@ -9,7 +8,6 @@ use aws_lc_rs::digest;
 use aws_lc_rs::digest::digest;
 use base64::Engine;
 use base64::engine::general_purpose;
-use config::Config;
 use log::{debug, info};
 use webauthn_rs::prelude::{Base64UrlSafeData, Credential, PasskeyRegistration, Url, Uuid};
 use webauthn_rs::{Webauthn, WebauthnBuilder};
@@ -20,6 +18,9 @@ use rustls_fido::enums::FidoPublicKeyAlgorithms;
 use rustls_fido::enums::FidoPublicKeyAlgorithms::COSE_ES256;
 use rustls_fido::error::Error;
 use rustls_fido::messages::{FidoClientData, FidoCredential, FidoRegistrationAuthenticatorSelection, FidoRegistrationResponse};
+use crate::common::get_fido_device_pin;
+
+mod common;
 
 struct RegisterState {
     user_id: Uuid,
@@ -165,23 +166,14 @@ impl RegisterState {
 fn main() -> Result<(), anyhow::Error> {
     env_logger::builder().filter_level(log::LevelFilter::Debug).filter(Some("authenticator"), log::LevelFilter::Warn).init();
 
-    let settings = Config::builder()
-        .add_source(config::File::with_name("config/config.toml"))
-        .build()?;
-
-    let rp_id = settings.get_string("rp_id")?;
-    let rp_name = settings.get_string("rp_name")?;
-    let user_name = settings.get_string("user_name")?;
-    let user_display_name = settings.get_string("user_display_name")?;
-    let timeout = settings.get_int("timeout")? as u64;
-    let fido_device_pin = settings.get_string("fido_device_pin").unwrap_or_else(|_| {
-        let stdin = io::stdin();
-        let input = &mut String::new();
-        print!("Enter FIDO device PIN: ");
-        stdin.read_line(input).expect("read_line");
-        input.clone()
-    });
-    let db_path = settings.get_string("db_path")?;
+    // Read environment variables with defaults
+    let rp_id = env_var_or_default!("FIDO_RP_ID", "localhost");
+    let rp_name = env_var_or_default!("FIDO_RP_NAME", "localhost");
+    let user_name = env_var_or_default!("FIDO_USER_NAME", "user");
+    let user_display_name = env_var_or_default!("FIDO_USER_DISPLAY_NAME", "User");
+    let db_path = env_var_or_default!("FIDO_DB_PATH", "./fido.db3");
+    let timeout = env_var_or_default!("FIDO_TIMEOUT", 6000).parse().expect("Timeout is malformed");
+    let fido_device_pin = get_fido_device_pin().expect("Failed to get FIDO device PIN");
     
     let rp_origin = Url::parse(&format!("https://{}", rp_id))?;
     let webauthn = WebauthnBuilder::new(&rp_id, &rp_origin)?
