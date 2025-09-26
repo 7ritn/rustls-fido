@@ -193,6 +193,7 @@ impl FidoClient {
     }
 
     pub fn authenticate_fido(&self, request: FidoAuthenticationRequest) -> Result<(), Error> {
+        debug!("Start authenticating user with FIDO token");
         let mut manager = AuthenticatorService::new().map_err(|e| Error::General(e.to_string()))?;
         manager.add_u2f_usb_hid_platform_transports();
 
@@ -243,6 +244,8 @@ impl FidoClient {
             .map_err(|e| Error::General(format!("{:?}", e)))?
             .map_err(|e| Error::General(format!("{:?}", e)))?;
 
+        debug!("Received signing response");
+
         let user_handle = match sign_result.assertion.user {
             Some(user) => Some(user.id),
             None => None
@@ -261,6 +264,8 @@ impl FidoClient {
             user_handle.expect("user_handle"),
             selected_credential_id.expect("selected_credential_id")
         )));
+
+        debug!("Sending FIDO2 authentication response");
 
         Ok(())
     }
