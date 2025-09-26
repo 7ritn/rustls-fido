@@ -156,7 +156,7 @@ impl AuthenticationState {
 }
 
 fn main() -> Result<(), anyhow::Error> {
-    env_logger::init();
+    env_logger::builder().filter_level(log::LevelFilter::Debug).filter(Some("authenticator"), log::LevelFilter::Warn).init();
 
     // Read environment variables with defaults
     let rp_id = env_var_or_default!("FIDO_RP_ID", "localhost");

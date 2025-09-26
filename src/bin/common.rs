@@ -20,5 +20,3 @@ pub(crate) fn get_fido_device_pin() -> Result<String> {
         Ok(input.trim().to_string())
     }
 }
-
-fn main() {}

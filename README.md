@@ -18,3 +18,7 @@ Environmental variables are used to specify the configuration:
 | `FIDO_TIMEOUT`           | FIDO timeout in milliseconds                  | `6000`        | `30000`             |
 | `FIDO_DB_PATH`           | Path to the FIDO database file                | `./fido.db3`  | `/var/lib/fido.db3` |
 | `FIDO_DEVICE_PIN`        | FIDO PIN for authentication                   | `1234`        | `5678`              |
+
+To register run `cargo run --features build-binary --bin register`
+
+To mock-authenticate run `cargo run --features build-binary --bin authenticate`
