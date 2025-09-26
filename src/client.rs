@@ -12,7 +12,7 @@ use base64::Engine;
 use crate::enums::{FidoMode, FidoPolicy};
 use crate::error::Error;
 use crate::helper::decrypt_in_place;
-use crate::messages::{FidoAuthenticationRequest, FidoAuthenticationResponse, FidoClientData, FidoPreRegistrationResponse, FidoRegistrationRequest, FidoRegistrationResponse, FidoResponse};
+use crate::messages::{FidoAuthenticationIndication, FidoAuthenticationRequest, FidoAuthenticationResponse, FidoClientData, FidoIndication, FidoPreRegistrationIndication, FidoPreRegistrationResponse, FidoRegistrationIndication, FidoRegistrationRequest, FidoRegistrationResponse, FidoResponse};
 
 /// FidoClient
 #[derive(Debug, Clone)]
@@ -59,6 +59,30 @@ impl FidoClient {
             fido_device_pin,
             persistent_reg_state,
             response_buffer: Default::default(),
+        }
+    }
+
+    pub fn create_indication(&self) -> FidoIndication {
+        match self.mode() {
+            FidoMode::Registration => {
+                let registration_state = self.current_reg_state();
+                match registration_state {
+                    None => {
+                        // Pre Registration
+                        debug!("Fido: Indicating PreRegistration");
+                        FidoIndication::PreRegistration(FidoPreRegistrationIndication::new())
+                    }
+                    Some(reg_state) => {
+                        // Registration
+                        debug!("Fido: Indicating Registration");
+                        FidoIndication::Registration(FidoRegistrationIndication::new(&reg_state.ephem_user_id))
+                    }
+                }
+            }
+            FidoMode::Authentication => {
+                debug!("Fido: Indicating Authentication");
+                FidoIndication::Authentication(FidoAuthenticationIndication::new())
+            }
         }
     }
 

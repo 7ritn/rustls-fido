@@ -1,6 +1,7 @@
 use std::{borrow::ToOwned, collections::HashMap, format, string::String, vec, vec::Vec};
 use std::prelude::rust_2024::ToString;
 use core::time::Duration;
+use log::debug;
 use webauthn_rs::prelude::{Base64UrlSafeData, Credential, DiscoverableAuthentication, PasskeyRegistration, Url, Uuid};
 use webauthn_rs::{Webauthn, WebauthnBuilder};
 use webauthn_rs_proto::{AuthenticatorAssertionResponseRaw, AuthenticatorAttestationResponseRaw, PublicKeyCredential, RegisterPublicKeyCredential};
@@ -51,6 +52,17 @@ impl FidoServer {
             .build()
             .expect("Couldn't build FIDO verifier");
         let db = FidoDB::new(db_path);
+        
+        debug!("FIDO server extension configured");
+        debug!("\tRP ID: {}", rp_id);
+        debug!("\tRP Name: {}", rp_name);
+        debug!("\tUser Verification Policy: {:?}", user_verification);
+        debug!("\tResident Key Policy: {:?}", resident_key);
+        debug!("\tAuthenticator Attachment Policy: {:?}", authenticator_attachment);
+        debug!("\tToken Timeout Policy: {}", timeout);
+        debug!("\tTicket: {:?}", ticket);
+        debug!("\tFIDO Authentication Mandatory: {}", mandatory);
+        debug!("\tPath to Database: {}", db_path);
 
         Self{
             webauthn,
@@ -69,10 +81,15 @@ impl FidoServer {
         if self.ticket != ticket {
             return Err(Error::General("fido registration ticket invalid".to_string()))
         }
+
         let gcm_key = self.pre_registration_state
             .get(&ephem_user_id)
             .ok_or(Error::General("client did not pre-register".to_string()))?;
+                
         let user_id = Uuid::new_v4();
+
+        debug!("Creating Registration Challenge {:?}", user_id);
+        debug!("\tEphem User ID: {:?},\nUser ID: {:?},\nUser Name: {},\nUser Display Name: {}", ephem_user_id, user_id, user_name, user_display_name);
 
         let (ccr, skr) = self.webauthn
             .start_passkey_registration(
@@ -123,6 +140,9 @@ impl FidoServer {
     pub fn finish_register_fido(&mut self, ephem_user_id: Vec<u8>, user_id: Vec<u8>, client_data_json: String, attestation_object: Vec<u8>) -> Result<(), Error> {
         let (_, skr) = self.registration_state.remove(&ephem_user_id).ok_or(Error::General("no registration state found".to_string()))?;
 
+        debug!("Verifying Authentication Response");
+        debug!("\tEphem User ID: {:?},\nUser ID: {:?}", ephem_user_id, user_id);
+
         let attestation_response = AuthenticatorAttestationResponseRaw{
             attestation_object: attestation_object.as_bytes().into(),
             client_data_json: client_data_json.as_bytes().into(),
@@ -140,10 +160,15 @@ impl FidoServer {
         let cred: Credential = passkey.clone().into();
         let reg_entry = RegEntry {cred_id: passkey.cred_id().to_vec(), user_id, passkey, counter: cred.counter};
         self.db.add_passkey(reg_entry)?;
+
+        debug!("FIDO registration successful");
+
         Ok(())
     }
 
     pub fn start_authentication_fido(&self) -> Result<(FidoAuthenticationRequest, DiscoverableAuthentication), Error> {
+        debug!("Creating Authentication Challenge");
+
         let (ar, sas) = self.webauthn.start_discoverable_authentication().map_err(|e| Error::General(e.to_string()))?;
 
         let authentication_request = FidoAuthenticationRequest::new(
@@ -159,6 +184,7 @@ impl FidoServer {
     }
 
     pub fn finish_authentication_fido(&self, fido_response: FidoAuthenticationResponse, sas: DiscoverableAuthentication) -> Result<(), Error>{
+        debug!("Verifying Authentication Response");
         let credential_id_string = String::from_utf8(fido_response.selected_credential_id.clone()).unwrap_or_default();
 
         let authentication_response = AuthenticatorAssertionResponseRaw{
@@ -180,6 +206,9 @@ impl FidoServer {
 
         let user_id = uuid.clone().as_bytes().to_vec();
         let passkey = self.db.get_passkey(&user_id)?;
+
+        debug!("Response associated with User ID {}", Uuid::from_bytes(user_id.clone().try_into().unwrap()));
+
         let _authentication_result = self.webauthn.finish_discoverable_authentication(&reg, sas, &[passkey.into()]).map_err(|e| Error::General(e.to_string()))?;
 
         let cred_counter = self.db.get_sign_count(&user_id)?;
@@ -189,6 +218,9 @@ impl FidoServer {
                 return Err(Error::General("counter mismatch".to_string()))
             }
         }
+        self.db.set_sign_count(&user_id, auth_counter)?;
+
+        debug!("FIDO authentication successful");
 
         Ok(())
     }
