@@ -114,9 +114,16 @@ impl FidoClient {
             .ok_or(Error::General("no pre_reg_state available".to_string()))?
             .gcm_key;
 
-        // ToDo verify request and actual user info match
         let mut enc_user_id = request.enc_user_id.clone();
+        let mut enc_user_name = request.enc_user_name.clone();
+        let mut enc_user_display_name = request.enc_user_display_name.clone();
         let user_id = decrypt_in_place(&gcm_key, &mut enc_user_id)?;
+        let user_name = decrypt_in_place(&gcm_key, &mut enc_user_name)?;
+        let user_display_name = decrypt_in_place(&gcm_key, &mut enc_user_display_name)?;
+
+        assert_eq!(user_name, self.user_name.clone().unwrap().as_bytes());
+        assert_eq!(user_display_name, self.user_display_name.clone().unwrap().as_bytes());
+
         let user = PublicKeyCredentialUserEntity {
             id: user_id.into(),
             name: Some(self.user_name.clone().unwrap()),
